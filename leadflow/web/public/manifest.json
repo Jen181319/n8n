@@ -1,0 +1,2 @@
+{ "name": "LeadFlow", "short_name": "LeadFlow", "start_url": "/dashboard/", "display": "standalone",
+  "background_color": "#ffffff", "theme_color": "#128c7e", "icons": [] }
