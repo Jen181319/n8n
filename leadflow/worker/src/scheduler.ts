@@ -5,7 +5,7 @@ import { isConnected, sendText } from './session.js';
 const ONE_MIN = 60_000;
 
 // Due reminders: 'autosend' sends the template; 'notify' is collected into the daily digest + shown in the app.
-async function runDueReminders() {
+export async function runDueReminders() {
   const snap = await db.collectionGroup('reminders').where('status', '==', 'pending').where('dueAt', '<=', Timestamp.now()).limit(50).get();
   for (const d of snap.docs) {
     const r = d.data();

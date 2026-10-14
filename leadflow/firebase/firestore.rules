@@ -6,13 +6,11 @@ service cloud.firestore {
 
     match /users/{uid} {
       allow read, write: if request.auth != null && request.auth.uid == uid;
-      match /{sub=**} {
-        allow read, write: if request.auth != null && request.auth.uid == uid;
-      }
-      // WhatsApp session state is written by the worker only
-      match /wa/{doc} {
+      // Everything under the user's own tree except wa/, which only the worker (admin SDK) may write.
+      // (Rules are OR-ed, so wa must be excluded here rather than denied separately.)
+      match /{coll}/{path=**} {
         allow read: if request.auth != null && request.auth.uid == uid;
-        allow write: if false;
+        allow write: if request.auth != null && request.auth.uid == uid && coll != 'wa';
       }
     }
   }

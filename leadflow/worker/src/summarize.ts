@@ -5,23 +5,32 @@ import { classifyContact, updateProfile } from './ai.js';
 const queue = new Map<string, NodeJS.Timeout>();
 
 // Debounce: wait 60s after the last message of a chat so bursts become one LLM call.
-export function queueSummary(uid: string, jid: string) {
+export function queueSummary(uid: string, jid: string, delayMs = 60_000) {
   const k = `${uid}/${jid}`;
   clearTimeout(queue.get(k));
-  queue.set(k, setTimeout(() => { queue.delete(k); summarize(uid, jid).catch(console.error); }, 60_000));
+  queue.set(k, setTimeout(() => { queue.delete(k); limited(() => summarize(uid, jid)).catch(console.error); }, delayMs));
 }
 
-export async function summarize(uid: string, jid: string) {
+// At most 3 LLM jobs at once (a history import can queue ~150 chats).
+let active = 0;
+const waiting: (() => void)[] = [];
+async function limited<T>(fn: () => Promise<T>): Promise<T> {
+  if (active >= 3) await new Promise<void>((r) => waiting.push(r));
+  active++;
+  try { return await fn(); } finally { active--; waiting.shift()?.(); }
+}
+
+export async function summarize(uid: string, jid: string, force = false) {
   const ref = db.doc(`users/${uid}/contacts/${jid}`);
   const c = (await ref.get()).data();
   if (!c || c.ignored) return;
 
-  const since = c.summaryUpdatedAt ?? Timestamp.fromMillis(0);
+  const since = force ? Timestamp.fromMillis(0) : c.summaryUpdatedAt ?? Timestamp.fromMillis(0);
   const msgs = (await ref.collection('messages').where('ts', '>', since).orderBy('ts').limit(80).get()).docs.map((d) => d.data());
   if (!msgs.length) return;
   const transcript = msgs.map((m) => `${m.fromMe ? 'AGENT' : 'CLIENT'}: ${m.text}`).join('\n');
 
-  if (c.isLead === undefined || c.isLead === 'auto') {
+  if (c.isLead === undefined || c.isLead === 'auto') {  // eslint-disable-line
     const { isLead } = await classifyContact(transcript);
     await ref.set({ isLead }, { merge: true });
     if (!isLead) { await ref.set({ summaryUpdatedAt: Timestamp.now(), pendingSummary: false }, { merge: true }); return; }

@@ -31,7 +31,7 @@ async function storeMessage(uid: string, m: proto.IWebMessageInfo, historical: b
   const cRef = db.doc(`users/${uid}/contacts/${jid}`);
   await cRef.collection('messages').doc(m.key.id!).set({ fromMe, text: t.text, type: t.type, ts }, { merge: true });
   await cRef.set({
-    jid, phone: jid.split('@')[0], name: m.pushName ?? FieldValue.delete(),
+    jid, phone: jid.split('@')[0], ...(!fromMe && m.pushName ? { name: m.pushName } : {}),
     lastMessageAt: ts, [fromMe ? 'lastOutboundAt' : 'lastInboundAt']: ts,
     needsReply: !fromMe, pendingSummary: true,
   }, { merge: true });
@@ -69,6 +69,11 @@ export async function startSession(uid: string) {
   sock.ev.on('messaging-history.set', async ({ messages, progress }) => {
     for (const m of messages) await storeMessage(uid, m, true).catch((e) => log.error(e));
     await sessionDoc(uid).set({ importProgress: progress ?? null, lastSyncAt: FieldValue.serverTimestamp() }, { merge: true });
+    if (progress === undefined || progress === null || progress >= 100) {
+      // first-time import finished: classify + summarise the most recent chats (bounded to control LLM cost)
+      const recent = await db.collection(`users/${uid}/contacts`).orderBy('lastMessageAt', 'desc').limit(150).get();
+      for (const d of recent.docs) if (d.data().lastInboundAt && !d.data().summaryUpdatedAt) queueSummary(uid, d.id, 1000);
+    }
   });
   sock.ev.on('messages.upsert', async ({ messages }) => {
     for (const m of messages) await storeMessage(uid, m, false).catch((e) => log.error(e));
